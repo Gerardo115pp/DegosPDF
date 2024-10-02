@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	pdf_utils "github.com/ledongthuc/pdf"
 )
 
 var ErrSkipDirectory = errors.New("Skip directory") // Should only skip the current directory, not stop the program
@@ -20,6 +22,34 @@ func DetectImageMagick() bool {
 	err := command.Run()
 
 	return err == nil
+}
+
+func CompileCommandArgs(pdf_source, pdf_destination string) []string {
+	dpi_string := strconv.Itoa(execution_mode.ImagesDPI())
+	memory_limit := execution_mode.MemoryLimit()
+	virtual_memory_limit := execution_mode.VirtualMemoryLimit()
+	disk_limit := execution_mode.DiskLimit()
+
+	var command_args []string = []string{
+		"magick",
+		"convert",
+		"-density", dpi_string,
+		"-limit", "memory", memory_limit,
+		"-limit", "map", virtual_memory_limit,
+		"-limit", "disk", disk_limit,
+	}
+
+	if execution_mode.IsVerbose() {
+		command_args = append(command_args, "-verbose")
+	}
+
+	if execution_mode.AntiAliasing() {
+		command_args = append(command_args, "-antialias")
+	}
+
+	command_args = append(command_args, pdf_source, pdf_destination)
+
+	return command_args
 }
 
 func ConvertPDFToImages(pdf_path, storage_path string) error {
@@ -41,13 +71,9 @@ func ConvertPDFToImages(pdf_path, storage_path string) error {
 	fmt.Printf("Converting PDF<%s> to images\n", pdf_path)
 	fmt.Printf("Output path: %s\n", output_path)
 
-	dpi_string := strconv.Itoa(execution_mode.ImagesDPI())
+	command_args := CompileCommandArgs(pdf_path, output_path)
 
-	if execution_mode.IsVerbose() {
-		command = exec.Command("magick", "convert", "-verbose", "-density", dpi_string, pdf_path, output_path)
-	} else {
-		command = exec.Command("magick", "convert", "-density", dpi_string, pdf_path, output_path)
-	}
+	command = exec.Command(command_args[0], command_args[1:]...)
 
 	command.Stderr = os.Stderr
 	command.Stdout = os.Stdout
@@ -64,6 +90,18 @@ func ConvertPDFToImages(pdf_path, storage_path string) error {
 	fmt.Printf("Conversion finished\n")
 
 	return err
+}
+
+func GetPDFPages(pdf_path string) (int, error) {
+	f, pdf_file, err := pdf_utils.Open(pdf_path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	pages := pdf_file.NumPage()
+
+	return pages, nil
 }
 
 func GetAllPDFsPaths(pdf_source string) ([]string, error) {
@@ -116,8 +154,15 @@ func RunBulkConversion(pdf_paths []string, pdf_storage_root string) error {
 			fmt.Printf("Stopping at limit: %d\n", processing_limit)
 			break
 		}
-
 		fmt.Printf("%s\nProcessing PDF<%s>\n", execution_mode.OUTPUT_THICK_DIVIDER, pdf_path)
+
+		pdf_pages, err := GetPDFPages(pdf_path)
+		if err != nil {
+			fmt.Printf("Error while getting PDF pages: %s\n", err)
+			return err
+		}
+		// TODO: Extract pages one by one instead of delegating that to imagemagick cause it does a terrible memory management job.
+		execution_mode.PrintIfVerbose(fmt.Sprintf("PDF<%s> has %d pages", pdf_path, pdf_pages))
 
 		new_pdf_path, err := MovePDF(pdf_path, pdf_storage_root)
 		if err != nil {
