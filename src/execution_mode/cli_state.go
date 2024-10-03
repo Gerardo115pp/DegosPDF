@@ -160,3 +160,9 @@ func DiskLimit() string {
 
 	return tool_state.DiskLimit
 }
+
+func Optimize() bool {
+	stateReliableOrPanic()
+
+	return !tool_state.NotOptimize
+}

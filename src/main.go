@@ -24,7 +24,8 @@ func DetectImageMagick() bool {
 	return err == nil
 }
 
-func CompileCommandArgs(pdf_source, pdf_destination string) []string {
+// Returns the command arguments, based on the execution_mode configuration, it skips the [input-pdf] [output-images-name].
+func CompileCommandArgs() []string {
 	dpi_string := strconv.Itoa(execution_mode.ImagesDPI())
 	memory_limit := execution_mode.MemoryLimit()
 	virtual_memory_limit := execution_mode.VirtualMemoryLimit()
@@ -47,12 +48,10 @@ func CompileCommandArgs(pdf_source, pdf_destination string) []string {
 		command_args = append(command_args, "-antialias")
 	}
 
-	command_args = append(command_args, pdf_source, pdf_destination)
-
 	return command_args
 }
 
-func ConvertPDFToImages(pdf_path, storage_path string) error {
+func RobustConvertPDFToImages(pdf_path, storage_path string) error {
 	var command *exec.Cmd
 	var err error
 
@@ -68,10 +67,12 @@ func ConvertPDFToImages(pdf_path, storage_path string) error {
 
 	output_path = fmt.Sprintf("%s-%%d%s", output_path, execution_mode.ImageExt())
 
-	fmt.Printf("Converting PDF<%s> to images\n", pdf_path)
-	fmt.Printf("Output path: %s\n", output_path)
+	execution_mode.PrintIfVerbose(fmt.Sprintf("Converting PDF<%s> to images\n", pdf_path))
+	execution_mode.PrintIfVerbose(fmt.Sprintf("Output path: %s\n", output_path))
 
-	command_args := CompileCommandArgs(pdf_path, output_path)
+	command_args := CompileCommandArgs()
+
+	command_args = append(command_args, pdf_path, output_path)
 
 	command = exec.Command(command_args[0], command_args[1:]...)
 
@@ -87,9 +88,53 @@ func ConvertPDFToImages(pdf_path, storage_path string) error {
 		}
 	}
 
-	fmt.Printf("Conversion finished\n")
+	execution_mode.PrintIfVerbose(fmt.Sprintf("Conversion finished\n"))
 
 	return err
+}
+
+func LightConvertPDFToImages(pages_count int, pdf_path, storage_path string) error {
+
+	var output_path string = filepath.Join(storage_path, execution_mode.ImagesName())
+
+	if execution_mode.ImagesName() == "" {
+		var pdf_name string = filepath.Base(pdf_path)
+
+		pdf_name = strings.TrimSuffix(pdf_name, filepath.Ext(pdf_name))
+
+		output_path = filepath.Join(storage_path, pdf_name)
+	}
+
+	execution_mode.PrintIfVerbose(fmt.Sprintf("Converting %d pages", pages_count))
+	var zero_indexed_pages_count int = pages_count - 1
+
+	var static_command_args []string = CompileCommandArgs()
+
+	for k := 0; k < zero_indexed_pages_count; k++ {
+		fmt.Printf("Page %d of %d", k+1, pages_count)
+		var iter_file_path string = fmt.Sprintf("%s[%d]", pdf_path, k)
+		var iter_output_path string = fmt.Sprintf("%s-%d%s", output_path, k, execution_mode.ImageExt())
+
+		command_args := append(static_command_args, iter_file_path, iter_output_path)
+
+		command := exec.Command(command_args[0], command_args[1:]...)
+
+		command.Stderr = os.Stderr
+		command.Stdout = os.Stdout
+
+		execution_mode.PrintIfVerbose(fmt.Sprintf("Command: %s", command.String()))
+
+		if !execution_mode.IsDryRun() {
+			err := command.Run()
+			if err != nil {
+				return fmt.Errorf("Error while converting page %d: %s", k, err)
+			}
+		}
+
+		execution_mode.PrintIfVerbose(fmt.Sprintf("Page %d converted", k))
+	}
+
+	return nil
 }
 
 func GetPDFPages(pdf_path string) (int, error) {
@@ -149,20 +194,28 @@ func VerifyExecutionMode() {
 
 func RunBulkConversion(pdf_paths []string, pdf_storage_root string) error {
 	var processing_limit int = execution_mode.Limit()
-	for h, pdf_path := range pdf_paths {
-		if processing_limit >= 1 && h >= processing_limit {
+	if processing_limit < 0 || processing_limit > len(pdf_paths) {
+		processing_limit = len(pdf_paths)
+	}
+	for h := 0; h < processing_limit; h++ {
+		pdf_path := pdf_paths[h]
+
+		fmt.Printf("PDF %d of %d\n", h+1, processing_limit)
+
+		if h >= processing_limit {
 			fmt.Printf("Stopping at limit: %d\n", processing_limit)
 			break
 		}
-		fmt.Printf("%s\nProcessing PDF<%s>\n", execution_mode.OUTPUT_THICK_DIVIDER, pdf_path)
 
-		pdf_pages, err := GetPDFPages(pdf_path)
+		execution_mode.PrintIfVerbose(fmt.Sprintf("%s\nProcessing PDF<%s>\n", execution_mode.OUTPUT_THICK_DIVIDER, pdf_path))
+
+		pdf_pages_count, err := GetPDFPages(pdf_path)
 		if err != nil {
 			fmt.Printf("Error while getting PDF pages: %s\n", err)
 			return err
 		}
 		// TODO: Extract pages one by one instead of delegating that to imagemagick cause it does a terrible memory management job.
-		execution_mode.PrintIfVerbose(fmt.Sprintf("PDF<%s> has %d pages", pdf_path, pdf_pages))
+		execution_mode.PrintIfVerbose(fmt.Sprintf("PDF<%s> has %d pages", pdf_path, pdf_pages_count))
 
 		new_pdf_path, err := MovePDF(pdf_path, pdf_storage_root)
 		if err != nil {
@@ -180,9 +233,16 @@ func RunBulkConversion(pdf_paths []string, pdf_storage_root string) error {
 
 		execution_mode.PrintIfVerbose(fmt.Sprintf("Pages Storage Path: %s", pages_storage_path))
 
-		err = ConvertPDFToImages(new_pdf_path, pages_storage_path)
-		if err != nil {
-			return err
+		if execution_mode.Optimize() || pdf_pages_count < 15 {
+			err = LightConvertPDFToImages(pdf_pages_count, new_pdf_path, pages_storage_path)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = RobustConvertPDFToImages(new_pdf_path, pages_storage_path)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -250,7 +310,7 @@ func RunSetup() {
 		os.Exit(1)
 	}
 
-	fmt.Println("ImageMagick is detected")
+	execution_mode.PrintIfVerbose(fmt.Sprintln("ImageMagick is detected"))
 }
 
 func main() {
