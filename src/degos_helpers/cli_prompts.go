@@ -1,4 +1,4 @@
-package bpti_helpers
+package degos_helpers
 
 import (
 	"flag"
