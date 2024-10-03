@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bulk_pdf_to_images/degos_helpers"
 	"bulk_pdf_to_images/execution_mode"
-	bpti_helpers "bulk_pdf_to_images/helpers"
 	"errors"
 	"fmt"
 	"os"
@@ -115,6 +115,11 @@ func LightConvertPDFToImages(pages_count int, pdf_path, storage_path string) err
 		var iter_file_path string = fmt.Sprintf("%s[%d]", pdf_path, k)
 		var iter_output_path string = fmt.Sprintf("%s-%d%s", output_path, k, execution_mode.ImageExt())
 
+		if file_exists := degos_helpers.PathExists(iter_output_path); file_exists {
+			execution_mode.PrintIfVerbose(fmt.Sprintf("Skipping page %d", k))
+			continue
+		}
+
 		command_args := append(static_command_args, iter_file_path, iter_output_path)
 
 		command := exec.Command(command_args[0], command_args[1:]...)
@@ -163,7 +168,7 @@ func GetAllPDFsPaths(pdf_source string) ([]string, error) {
 		}
 
 		path := fmt.Sprintf("%s/%s", pdf_source, entry.Name())
-		if is_pdf, _ := bpti_helpers.IsPDF(path); is_pdf {
+		if is_pdf, _ := degos_helpers.IsPDF(path); is_pdf {
 			pdf_paths = append(pdf_paths, path)
 		}
 	}
@@ -175,18 +180,18 @@ func VerifyExecutionMode() {
 	err := execution_mode.PopulateState()
 	if err != nil {
 		fmt.Printf("Error on boot: %s\n", err)
-		bpti_helpers.PrintUsage()
+		degos_helpers.PrintUsage()
 		os.Exit(1)
 	}
 
 	if execution_mode.IsHelpMode() {
-		bpti_helpers.PrintHelp()
+		degos_helpers.PrintHelp()
 		os.Exit(0)
 	}
 
 	pdf_source := execution_mode.PDFSource()
 
-	if !bpti_helpers.IsDirectory(pdf_source) {
+	if !degos_helpers.IsDirectory(pdf_source) {
 		fmt.Println("PDF Source must be an existing directory")
 		os.Exit(1)
 	}
@@ -209,14 +214,15 @@ func RunBulkConversion(pdf_paths []string, pdf_storage_root string) error {
 
 		execution_mode.PrintIfVerbose(fmt.Sprintf("%s\nProcessing PDF<%s>\n", execution_mode.OUTPUT_THICK_DIVIDER, pdf_path))
 
+		// Get PDF pages count
 		pdf_pages_count, err := GetPDFPages(pdf_path)
 		if err != nil {
 			fmt.Printf("Error while getting PDF pages: %s\n", err)
 			return err
 		}
-		// TODO: Extract pages one by one instead of delegating that to imagemagick cause it does a terrible memory management job.
 		execution_mode.PrintIfVerbose(fmt.Sprintf("PDF<%s> has %d pages", pdf_path, pdf_pages_count))
 
+		// Move PDF to storage root
 		new_pdf_path, err := MovePDF(pdf_path, pdf_storage_root)
 		if err != nil {
 			if errors.Is(err, ErrSkipDirectory) {
@@ -229,7 +235,7 @@ func RunBulkConversion(pdf_paths []string, pdf_storage_root string) error {
 
 		execution_mode.PrintIfVerbose(fmt.Sprintf("PDF<%s> moved", new_pdf_path))
 
-		pages_storage_path := bpti_helpers.GetParentDirectory(new_pdf_path)
+		pages_storage_path := degos_helpers.GetParentDirectory(new_pdf_path)
 
 		execution_mode.PrintIfVerbose(fmt.Sprintf("Pages Storage Path: %s", pages_storage_path))
 
@@ -254,7 +260,7 @@ func RunBulkConversion(pdf_paths []string, pdf_storage_root string) error {
 func MovePDF(pdf_path string, pdf_storage_root string) (string, error) {
 	var pdf_directory string
 
-	pdf_directory = bpti_helpers.GetPDFDirectoryName(pdf_path)
+	pdf_directory = degos_helpers.GetPDFDirectoryName(pdf_path)
 	pdf_directory = filepath.Join(pdf_storage_root, pdf_directory)
 	execution_mode.PrintIfVerbose(fmt.Sprintf("PDF Directory: %s", pdf_directory))
 
@@ -271,14 +277,14 @@ func MovePDF(pdf_path string, pdf_storage_root string) (string, error) {
 		return new_pdf_path, nil
 	}
 
-	err := bpti_helpers.CreateDirectoryIfNotExists(pdf_directory)
+	err := degos_helpers.CreateDirectoryIfNotExists(pdf_directory)
 	if err != nil {
 		return "", err
 	}
 
 	var images_extension string = execution_mode.ImageExt()
 
-	directory_has_pages, err := bpti_helpers.DirectoryHasPages(pdf_directory, images_extension)
+	directory_has_pages, err := degos_helpers.DirectoryHasPages(pdf_directory, images_extension)
 	if err != nil {
 		execution_mode.PrintIfVerbose(fmt.Sprintf("Error while checking for PNGs in directory: %s", err))
 		return "", err
@@ -286,7 +292,7 @@ func MovePDF(pdf_path string, pdf_storage_root string) (string, error) {
 
 	if directory_has_pages {
 		if execution_mode.OverwriteExistingDirectories() {
-			err = bpti_helpers.CleanDirectoryPreviousPages(pdf_directory, images_extension)
+			err = degos_helpers.CleanDirectoryPreviousPages(pdf_directory, images_extension)
 			if err != nil {
 				return "", err
 			}
@@ -327,7 +333,7 @@ func main() {
 
 	var pdf_storage_root string
 
-	pdf_storage_root = bpti_helpers.GetParentDirectory(execution_mode.PDFSource())
+	pdf_storage_root = degos_helpers.GetParentDirectory(execution_mode.PDFSource())
 
 	if pdf_storage_root == "" {
 		fmt.Printf("Parsing directory A from B<%s> resulted in: ''", execution_mode.PDFSource())
