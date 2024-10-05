@@ -111,7 +111,7 @@ func LightConvertPDFToImages(pages_count int, pdf_path, storage_path string) err
 	var static_command_args []string = CompileCommandArgs()
 
 	for k := 0; k < zero_indexed_pages_count; k++ {
-		fmt.Printf("Page %d of %d", k+1, pages_count)
+		fmt.Printf("Page %d of %d\n", k+1, pages_count)
 		var iter_file_path string = fmt.Sprintf("%s[%d]", pdf_path, k)
 		var iter_output_path string = fmt.Sprintf("%s-%d%s", output_path, k, execution_mode.ImageExt())
 
@@ -132,11 +132,11 @@ func LightConvertPDFToImages(pages_count int, pdf_path, storage_path string) err
 		if !execution_mode.IsDryRun() {
 			err := command.Run()
 			if err != nil {
-				return fmt.Errorf("Error while converting page %d: %s", k, err)
+				return fmt.Errorf("Error while converting page %d: %s", k+1, err)
 			}
 		}
 
-		execution_mode.PrintIfVerbose(fmt.Sprintf("Page %d converted", k))
+		execution_mode.PrintIfVerbose(fmt.Sprintf("Page %d converted\n%s\n", k+1, execution_mode.OUTPUT_THICK_DIVIDER))
 	}
 
 	return nil
